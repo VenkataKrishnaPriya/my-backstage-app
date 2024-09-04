@@ -1,0 +1,5 @@
+FROM spotify/techdocs:latest 
+
+RUN pip install mkdocs-awesome-pages-plugin mkdocs-techdocs-core
+
+ENTRYPOINT [ "mkdocs" ]

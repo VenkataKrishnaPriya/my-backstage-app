@@ -1,0 +1,14 @@
+site_name: 'my-backstage-app'
+repo_url: https://github.com/Jegan-Kunniya/my-backstage-app
+edit_uri: tree/exp/techdocs-local-demo/docs
+nav:
+  - About: index.md
+  - Home: main-doc.md
+  - Tech Docs Addon:
+      - another-doc.md
+plugins:
+  - techdocs-core
+theme:
+  name: mkdocs
+markdown_extensions:
+  - attr_list

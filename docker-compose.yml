@@ -1,0 +1,186 @@
+# This compose file is shared between local development and automated testing in playwright
+# You should only make changes here that are suitable for both environments
+# If you need to make changes for local dev please make them in docker-compose.override.yml
+---
+version: "3"
+services:
+  dex:
+    image: dexidp/dex:v2.33.0
+    ports:
+      - 5556:5556
+    volumes:
+      - ./config/auth/dex.yml/:/etc/dex/config.docker.yaml
+    healthcheck:
+      test:
+        wget --no-verbose --tries=1 --spider
+        http://localhost:5556/dex/.well-known/openid-configuration || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  proxy:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.2.0
+    command: oauth2-proxy --alpha-config /config.yml
+    environment:
+      - OAUTH2_PROXY_COOKIE_SECRET=shhhhhitsasecret
+      - OAUTH2_PROXY_COOKIE_SECURE=false
+      - OAUTH2_PROXY_EMAIL_DOMAINS=*
+      - OAUTH2_PROXY_FORCE_HTTPS=false
+      - OAUTH2_PROXY_SKIP_PROVIDER_BUTTON=true
+    ports:
+      - 3000:3000
+    volumes:
+      - ./config/auth/oauth2proxy_config.yml/:/config.yml
+    healthcheck:
+      test:
+        wget --no-verbose --tries=1 --spider http://localhost:3000/ping || exit
+        1
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  backstage:
+    build:
+      context: ./
+    environment:
+      - LOG_LEVEL=debug
+      # This value must match the name of the postgres configuration block.
+      - POSTGRES_HOST=backstage-db
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - BACKSTAGE_ENVIRONMENT=dev
+      - LOCALSTACK_HOST=localstack
+      - AUTH_GITHUB_CLIENT_ID
+      - AUTH_GITHUB_CLIENT_SECRET
+      - AUTH_GITHUB_APP_ID
+      - AUTH_GITHUB_WEBHOOK_URL
+      - AUTH_GITHUB_WEBHOOK_SECRET
+      - AUTH_GITHUB_PRIVATE_KEY
+      - STACK_OVERFLOW_API_KEY
+      - SONARQUBE_PIC_API_KEY
+      - SONARQUBE_DEFAULT_API_KEY
+      - SONARQUBE_DEFAULT_ADMIN_API_KEY
+      - TECHDOCS_AWS_S3_BUCKET_NAME=techdocs
+      - TECHDOCS_AWS_S3_ENDPOINT=http://localstack:4566/
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+      - BLACKDUCK_API_KEY
+      - KROKI_SERVER_URL=http://localhost:3000/api/proxy/kroki/
+      - SQS_QUEUE_URL=http://localstack:4566/000000000000/devportal
+      - APP_CONFIG_events_modules_awsSqs_awsSqsConsumingEventPublisher_topics_sqsevents_queue_endpoint=http://localstack:4566/
+      - DATAPIPE_BUS_NAME=devportal
+    volumes:
+      - ./e2e-test/test-data/:/test-data/
+      - ./local:/local
+    depends_on:
+      - backstage-db
+      - localstack
+      - localstack-setup
+    healthcheck:
+      test:
+        curl --fail -s http://localhost:3000/ :-
+        http://localhost:7007/healthcheck || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  backstage-db:
+    image: postgres
+    restart: always
+    environment:
+      POSTGRES_PASSWORD: postgres
+    healthcheck:
+      test: [CMD-SHELL, pg_isready, -U, postgres, -d, catalog]
+      interval: 30s
+      timeout: 60s
+      retries: 5
+
+  localstack:
+    container_name: "${LOCALSTACK_DOCKER_NAME-localstack_main}"
+    image: localstack/localstack
+    hostname: localstack
+    ports:
+      - 127.0.0.1:4566:4566 # LocalStack Gateway
+      - 127.0.0.1:4510-4559:4510-4559 # external services port range
+    environment:
+      - DEBUG=${DEBUG-}
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - ENABLE_CONFIG_UPDATES=1
+      - LOCALSTACK_HOSTNAME=localhost.localstack.cloud
+      - OPENSEARCH_ENDPOINT_STRATEGY=path
+      - HOSTNAME_EXTERNAL=localstack
+      - PERSISTENCE=1
+      - SQS_PORT_EXTERNAL=4566
+    volumes:
+      - localstack:/var/lib/localstack
+      - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test: curl --fail -s http://localhost:4566/_localstack/health || exit 1
+      interval: 30s
+      timeout: 60s
+      retries: 5
+    networks:
+      default:
+        aliases:
+          - localhost.localstack.cloud
+
+  localstack-setup:
+    build:
+      context: ./tools/localstack-setup/
+    depends_on:
+      - localstack
+    restart: "no"
+    environment:
+      - TECHDOCS_AWS_S3_BUCKET_NAME=techdocs
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+      - LOCALSTACK_HOST=localstack
+    healthcheck:
+      test: /scripts/healthcheck.sh
+      interval: 5s
+      timeout: 5s
+      retries: 99999
+      start_period: 60s
+    volumes:
+      - ./tools/localstack-setup/:/scripts/
+
+  kroki:
+    image: yuzutech/kroki:0.22.0
+    depends_on:
+      - mermaid
+      - excalidraw
+    environment:
+      - KROKI_MERMAID_HOST=mermaid
+      - KROKI_EXCALIDRAW_HOST=excalidraw
+    ports:
+      - 8006:8000
+    healthcheck:
+      test: curl --fail -s http://localhost:8000 || exit 1
+      interval: 30s
+      timeout: 60s
+      retries: 5
+  mermaid:
+    image: yuzutech/kroki-mermaid:0.22.0
+    expose:
+      - "8002"
+    healthcheck:
+      test: exit 0
+      interval: 5s
+      timeout: 5s
+      retries: 2
+  excalidraw:
+    image: yuzutech/kroki-excalidraw:0.22.0
+    expose:
+      - "8004"
+    healthcheck:
+      test: exit 0
+      interval: 5s
+      timeout: 5s
+      retries: 2
+
+volumes:
+  # trunk-ignore(yamllint/empty-values)
+  localstack:
